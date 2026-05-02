@@ -1,0 +1,31 @@
+configuration:
+  port:
+    name: Port
+    description: TCP port exposed by the MCP HTTP server.
+  db_host:
+    name: MariaDB host
+    description: Hostname of the MariaDB server or Home Assistant MariaDB add-on.
+  db_port:
+    name: MariaDB port
+    description: Port of the MariaDB server.
+  db_name:
+    name: Database name
+    description: Database used by the Health MCP service.
+  db_user:
+    name: Database user
+    description: MariaDB user used by the service.
+  db_password:
+    name: Database password
+    description: Password for the MariaDB user.
+  api_key:
+    name: API key
+    description: Optional bearer token required for MCP access.
+  auto_migrate:
+    name: Auto migrate
+    description: Create database tables automatically on startup.
+  log_level:
+    name: Log level
+    description: Application log level.
+network:
+  8099/tcp: Health MCP HTTP endpoint
+

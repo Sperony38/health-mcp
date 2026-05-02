@@ -1,0 +1,35 @@
+name: "Health MCP"
+version: "0.1.0"
+slug: "health_mcp"
+description: "Remote MCP server for laboratory data with MariaDB storage."
+startup: services
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armv7
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Health MCP HTTP endpoint"
+webui: "http://[HOST]:[PORT:8099]"
+options:
+  port: 8099
+  db_host: "core-mariadb"
+  db_port: 3306
+  db_name: "health_mcp"
+  db_user: "health_mcp"
+  db_password: null
+  api_key: null
+  auto_migrate: true
+  log_level: "info"
+schema:
+  port: port
+  db_host: str
+  db_port: port
+  db_name: str
+  db_user: str
+  db_password: password
+  api_key: "password?"
+  auto_migrate: bool
+  log_level: list(trace|debug|info|notice|warning|error|fatal)
