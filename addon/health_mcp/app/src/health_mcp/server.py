@@ -5,6 +5,7 @@ import json
 import logging
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -52,16 +53,19 @@ def _configure_logging(level: str) -> None:
     )
 
 
-def create_mcp_server(service: HealthService) -> FastMCP:
+def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     mcp = FastMCP(
         "Health MCP",
         instructions=(
-        "Use this server to store laboratory indicators, register reference ranges, "
+            "Use this server to store laboratory indicators, register reference ranges, "
             "import patient lab reports, and read historical values with normality status. "
             "Patients are always scoped to an owning Home Assistant user via owner_user_id."
         ),
+        host=settings.host,
+        port=settings.port,
         stateless_http=True,
         json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
     @mcp.tool()
@@ -164,7 +168,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
     if settings.auto_migrate:
         service.initialize_schema()
 
-    mcp = create_mcp_server(service)
+    mcp = create_mcp_server(service, settings)
 
     async def homepage(_: Request) -> JSONResponse:
         return JSONResponse({

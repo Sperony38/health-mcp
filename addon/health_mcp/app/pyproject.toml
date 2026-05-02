@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "health-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Remote MCP server for laboratory analyses with MariaDB persistence."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,4 +27,3 @@ packages = ["src/health_mcp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

@@ -1,5 +1,5 @@
 name: "Health MCP"
-version: "0.1.0"
+version: "0.1.1"
 slug: "health_mcp"
 description: "Remote MCP server for laboratory data with MariaDB storage."
 startup: services
@@ -20,7 +20,7 @@ options:
   db_name: "health_mcp"
   db_user: "health_mcp"
   db_password: null
-  api_key: null
+  api_key: ""
   auto_migrate: true
   log_level: "info"
 schema:
