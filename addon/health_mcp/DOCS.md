@@ -7,7 +7,7 @@ Health MCP exposes a remote MCP server for laboratory data. It stores patient la
 - remote MCP endpoint over HTTP
 - MariaDB-backed persistence
 - indicator catalog with reusable reference ranges
-- lab report import
+- agent-friendly structured lab report import
 - per-user patient ownership for family members
 - patient indicator history lookup with normal/low/high status
 
@@ -62,10 +62,31 @@ If `api_key` is configured, clients must send:
     "source_system": "manual",
     "results": [
       {
-        "indicator_code": "HGB",
-        "indicator_name": "Hemoglobin",
-        "value": 132,
-        "unit": "g/L"
+        "indicator_code": "loinc:13457-7",
+        "indicator_name": "Холестерин ЛПНЩ",
+        "standard_system": "loinc",
+        "standard_code": "13457-7",
+        "source_name": "Ліпопротеїди низької щільності (ЛПНЩ, LDL)",
+        "value": 3.72,
+        "raw_value": "3.72",
+        "unit": "ммоль/л",
+        "captured_upper_bound": 3.0,
+        "reference_text": "<3.0 - для груп низького ризику"
+      },
+      {
+        "indicator_code": "loinc:43583-4",
+        "indicator_name": "Ліпопротеїн (a)",
+        "standard_system": "loinc",
+        "standard_code": "43583-4",
+        "source_name": "Ліпопротеїн (a), Lp(a), нефелометрія, кількісний",
+        "value": 2.0,
+        "raw_value": "<2*",
+        "value_operator": "<",
+        "unit": "мг/дл",
+        "captured_lower_bound": 5.6,
+        "captured_upper_bound": 33.8,
+        "reference_text": "5,6 - 33,8",
+        "flag": "lab_flagged"
       }
     ]
   }
@@ -74,7 +95,11 @@ If `api_key` is configured, clients must send:
 
 ## Notes
 
-- `auto_migrate: true` uses the built-in SQLAlchemy schema creation on startup.
+- `import_lab_report` is the recommended ingestion path when an agent or client has already parsed a PDF, OCR, or another upstream source into structured values.
+- For cross-lab normalization, prefer an international semantic identity such as `standard_system: "loinc"` plus `standard_code`, and keep `indicator_code` aligned with that identity, for example `loinc:2093-3`.
+- If an indicator has no catalog range yet, the service falls back to `captured_lower_bound` and `captured_upper_bound` from the imported result so status can still be classified immediately.
+- `raw_value`, `value_operator`, `source_name`, and `reference_text` let the client preserve the source lab wording without sacrificing normalized numeric history.
+- `auto_migrate: true` creates missing tables and also applies built-in additive column upgrades used by newer import payloads.
 - A manual SQL bootstrap file is bundled at `/usr/src/app/sql/init.sql`.
 - The service does not perform unit conversion; if report units differ from the catalog unit, the result is stored and returned with a warning.
 - Patient IDs are unique only within `owner_user_id`, so different family members can safely use the same local patient identifier.

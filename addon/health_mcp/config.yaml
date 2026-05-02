@@ -1,5 +1,5 @@
 name: "Health MCP"
-version: "0.1.1"
+version: "0.1.2"
 slug: "health_mcp"
 description: "Remote MCP server for laboratory data with MariaDB storage."
 startup: services

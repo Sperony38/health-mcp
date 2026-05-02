@@ -12,6 +12,7 @@ Remote MCP service for importing laboratory analyses, storing them in MariaDB, a
 - imports lab reports for a patient
 - scopes patients to an owning Home Assistant user
 - stores indicator catalog entries and reference ranges
+- supports international semantic identities such as LOINC for cross-lab normalization
 - resolves the best matching reference range by age and sex
 - returns indicator catalog metadata and patient indicator history over MCP
 

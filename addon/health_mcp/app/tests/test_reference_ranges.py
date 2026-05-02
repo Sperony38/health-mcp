@@ -1,9 +1,11 @@
+import pytest
+
 from datetime import date, datetime
 from decimal import Decimal
 
 from health_mcp.models import IndicatorReferenceRange
-from health_mcp.schemas import IndicatorStatus
-from health_mcp.service import classify_value, select_best_reference_range
+from health_mcp.schemas import IndicatorStatus, IndicatorUpsertInput, LabResultInput
+from health_mcp.service import ComparableRange, classify_value, select_best_reference_range
 
 
 def make_range(
@@ -50,3 +52,52 @@ def test_classify_value_returns_expected_status():
     assert classify_value(Decimal("5.0"), range_row) == IndicatorStatus.normal
     assert classify_value(Decimal("6.1"), range_row) == IndicatorStatus.high
 
+
+def test_classify_value_can_use_report_captured_range():
+    captured_range = ComparableRange(
+        lower_bound=Decimal("3.2"),
+        upper_bound=Decimal("8.2"),
+        note="3,2 - 8,2",
+    )
+
+    assert classify_value(Decimal("8.4"), captured_range) == IndicatorStatus.high
+
+
+def test_lab_result_input_supports_agent_supplied_raw_fields():
+    result = LabResultInput(
+        indicator_code="lipoprotein-a",
+        indicator_name="Ліпопротеїн (a)",
+        standard_system="loinc",
+        standard_code="43583-4",
+        source_name="Ліпопротеїн (a), Lp(a), нефелометрія, кількісний",
+        value=2.0,
+        raw_value="<2*",
+        value_operator="<",
+        unit="мг/дл",
+        captured_lower_bound=5.6,
+        captured_upper_bound=33.8,
+        reference_text="5,6 - 33,8",
+        flag="lab_flagged",
+    )
+
+    assert result.source_name.startswith("Ліпопротеїн")
+    assert result.raw_value == "<2*"
+    assert result.value_operator == "<"
+    assert result.reference_text == "5,6 - 33,8"
+
+
+def test_standard_identity_fields_must_be_provided_together():
+    with pytest.raises(ValueError):
+        LabResultInput(
+            indicator_code="cholesterol-total",
+            indicator_name="Загальний холестерин",
+            standard_system="loinc",
+            value=5.3,
+        )
+
+    with pytest.raises(ValueError):
+        IndicatorUpsertInput(
+            code="cholesterol-total",
+            name="Загальний холестерин",
+            standard_code="2093-3",
+        )

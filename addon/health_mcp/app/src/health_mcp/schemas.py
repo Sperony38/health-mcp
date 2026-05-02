@@ -56,15 +56,25 @@ class IndicatorUpsertInput(BaseModel):
 
     code: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
+    standard_system: str | None = Field(default=None, max_length=32)
+    standard_code: str | None = Field(default=None, max_length=64)
     canonical_unit: str | None = Field(default=None, max_length=64)
     description: str | None = None
     reference_ranges: list[ReferenceRangeInput] = Field(default_factory=list)
     replace_reference_ranges: bool = True
 
+    @model_validator(mode="after")
+    def validate_standard_identity(self) -> "IndicatorUpsertInput":
+        if (self.standard_system is None) != (self.standard_code is None):
+            raise ValueError("standard_system and standard_code must be provided together")
+        return self
+
 
 class IndicatorSummary(BaseModel):
     code: str
     name: str
+    standard_system: str | None = None
+    standard_code: str | None = None
     canonical_unit: str | None = None
     reference_range_count: int
 
@@ -79,12 +89,24 @@ class LabResultInput(BaseModel):
 
     indicator_code: str = Field(min_length=1, max_length=128)
     indicator_name: str | None = Field(default=None, max_length=255)
+    standard_system: str | None = Field(default=None, max_length=32)
+    standard_code: str | None = Field(default=None, max_length=64)
+    source_name: str | None = Field(default=None, max_length=255)
     value: float
+    raw_value: str | None = Field(default=None, max_length=64)
+    value_operator: str | None = Field(default=None, max_length=8)
     unit: str | None = Field(default=None, max_length=64)
     captured_lower_bound: float | None = None
     captured_upper_bound: float | None = None
+    reference_text: str | None = None
     flag: str | None = Field(default=None, max_length=32)
     comment: str | None = None
+
+    @model_validator(mode="after")
+    def validate_standard_identity(self) -> "LabResultInput":
+        if (self.standard_system is None) != (self.standard_code is None):
+            raise ValueError("standard_system and standard_code must be provided together")
+        return self
 
 
 class LabReportInput(BaseModel):
@@ -106,10 +128,15 @@ class LabReportInput(BaseModel):
 class ImportedLabResult(BaseModel):
     indicator_code: str
     indicator_name: str
+    standard_system: str | None = None
+    standard_code: str | None = None
+    source_name: str | None = None
     value: float
+    raw_value: str | None = None
     unit: str | None = None
     status: IndicatorStatus
     reference_range: ReferenceRangeView | None = None
+    reference_text: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -128,10 +155,15 @@ class IndicatorHistoryPoint(BaseModel):
     collected_at: datetime
     source_system: str | None = None
     external_report_id: str | None = None
+    standard_system: str | None = None
+    standard_code: str | None = None
+    source_name: str | None = None
     value: float
+    raw_value: str | None = None
     unit: str | None = None
     status: IndicatorStatus
     reference_range: ReferenceRangeView | None = None
+    reference_text: str | None = None
 
 
 class IndicatorHistoryView(BaseModel):
@@ -140,6 +172,8 @@ class IndicatorHistoryView(BaseModel):
     patient_name: str | None = None
     indicator_code: str
     indicator_name: str
+    standard_system: str | None = None
+    standard_code: str | None = None
     canonical_unit: str | None = None
     points: list[IndicatorHistoryPoint] = Field(default_factory=list)
 

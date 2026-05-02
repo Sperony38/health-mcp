@@ -17,12 +17,15 @@ CREATE TABLE IF NOT EXISTS indicators (
     id BIGINT NOT NULL AUTO_INCREMENT,
     code VARCHAR(128) NOT NULL,
     name VARCHAR(255) NOT NULL,
+    standard_system VARCHAR(32) NULL,
+    standard_code VARCHAR(64) NULL,
     canonical_unit VARCHAR(64) NULL,
     description TEXT NULL,
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_indicators_code (code)
+    UNIQUE KEY uq_indicators_code (code),
+    UNIQUE KEY uq_indicators_standard_identity (standard_system, standard_code)
 );
 
 CREATE TABLE IF NOT EXISTS indicator_reference_ranges (
@@ -63,10 +66,14 @@ CREATE TABLE IF NOT EXISTS lab_results (
     id BIGINT NOT NULL AUTO_INCREMENT,
     report_id BIGINT NOT NULL,
     indicator_id BIGINT NOT NULL,
+    source_name VARCHAR(255) NULL,
+    raw_value VARCHAR(64) NULL,
+    value_operator VARCHAR(8) NULL,
     measured_value DECIMAL(14, 4) NOT NULL,
     unit VARCHAR(64) NULL,
     captured_lower_bound DECIMAL(14, 4) NULL,
     captured_upper_bound DECIMAL(14, 4) NULL,
+    reference_text TEXT NULL,
     flag VARCHAR(32) NULL,
     comment TEXT NULL,
     created_at DATETIME NOT NULL,

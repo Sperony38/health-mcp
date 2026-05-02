@@ -40,10 +40,15 @@ class Patient(Base):
 
 class Indicator(Base):
     __tablename__ = "indicators"
+    __table_args__ = (
+        UniqueConstraint("standard_system", "standard_code", name="uq_indicators_standard_identity"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    standard_system: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    standard_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     canonical_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -110,10 +115,14 @@ class LabResult(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("lab_reports.id", ondelete="CASCADE"))
     indicator_id: Mapped[int] = mapped_column(ForeignKey("indicators.id", ondelete="RESTRICT"), index=True)
+    source_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    raw_value: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    value_operator: Mapped[str | None] = mapped_column(String(8), nullable=True)
     measured_value: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     captured_lower_bound: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
     captured_upper_bound: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+    reference_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     flag: Mapped[str | None] = mapped_column(String(32), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

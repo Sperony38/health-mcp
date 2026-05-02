@@ -77,6 +77,17 @@ class RangeMatch:
     score: tuple[int, int, float, int]
 
 
+@dataclass(frozen=True)
+class ComparableRange:
+    lower_bound: Decimal | None
+    upper_bound: Decimal | None
+    note: str | None = None
+    sex: str | None = None
+    min_age_days: int | None = None
+    max_age_days: int | None = None
+    priority: int = 0
+
+
 def _range_matches(range_row: IndicatorReferenceRange, sex: str | None, age_days: int | None) -> bool:
     if range_row.sex and sex and range_row.sex != sex:
         return False
@@ -124,7 +135,7 @@ def select_best_reference_range(
     return matches[0].range_row
 
 
-def classify_value(value: Decimal, range_row: IndicatorReferenceRange | None) -> IndicatorStatus:
+def classify_value(value: Decimal, range_row: IndicatorReferenceRange | ComparableRange | None) -> IndicatorStatus:
     if range_row is None:
         return IndicatorStatus.unknown
     if range_row.lower_bound is not None and value < range_row.lower_bound:
@@ -146,10 +157,11 @@ class HealthService:
 
     def upsert_indicator(self, payload: IndicatorUpsertInput) -> IndicatorCatalogEntry:
         with self.database.session() as session:
-            indicator = session.scalar(
-                select(Indicator)
-                .options(selectinload(Indicator.reference_ranges))
-                .where(func.lower(Indicator.code) == payload.code.lower())
+            indicator = self._find_indicator_for_write(
+                session,
+                payload.code,
+                payload.standard_system,
+                payload.standard_code,
             )
 
             if indicator is None:
@@ -158,6 +170,8 @@ class HealthService:
 
             indicator.code = payload.code
             indicator.name = payload.name
+            indicator.standard_system = payload.standard_system
+            indicator.standard_code = payload.standard_code
             indicator.canonical_unit = payload.canonical_unit
             indicator.description = payload.description
 
@@ -179,13 +193,17 @@ class HealthService:
             if query:
                 like = f"%{query.lower()}%"
                 statement = statement.where(
-                    func.lower(Indicator.code).like(like) | func.lower(Indicator.name).like(like)
+                    func.lower(Indicator.code).like(like)
+                    | func.lower(Indicator.name).like(like)
+                    | func.lower(func.coalesce(Indicator.standard_code, "")).like(like)
                 )
             rows = session.scalars(statement.limit(effective_limit)).all()
             return [
                 IndicatorSummary(
                     code=row.code,
                     name=row.name,
+                    standard_system=row.standard_system,
+                    standard_code=row.standard_code,
                     canonical_unit=row.canonical_unit,
                     reference_range_count=len(row.reference_ranges),
                 )
@@ -253,10 +271,11 @@ class HealthService:
             patient_age_days = _calculate_age_days(patient.birth_date, report.collected_at)
 
             for item in payload.results:
-                indicator = session.scalar(
-                    select(Indicator)
-                    .options(selectinload(Indicator.reference_ranges))
-                    .where(func.lower(Indicator.code) == item.indicator_code.lower())
+                indicator = self._find_indicator_for_import(
+                    session,
+                    item.indicator_code,
+                    item.standard_system,
+                    item.standard_code,
                 )
                 if indicator is None:
                     if not item.indicator_name:
@@ -266,22 +285,37 @@ class HealthService:
                     indicator = Indicator(
                         code=item.indicator_code,
                         name=item.indicator_name,
+                        standard_system=item.standard_system,
+                        standard_code=item.standard_code,
                         canonical_unit=item.unit,
                     )
                     session.add(indicator)
                     session.flush()
-
-                elif item.indicator_name and indicator.name != item.indicator_name:
-                    indicator.name = item.indicator_name
+                else:
+                    if item.standard_system and item.standard_code:
+                        self._apply_indicator_standard_identity(
+                            indicator,
+                            item.standard_system,
+                            item.standard_code,
+                        )
 
                 result_value = Decimal(str(item.value))
+                captured_range = self._captured_range_from_bounds(
+                    item.captured_lower_bound,
+                    item.captured_upper_bound,
+                    item.reference_text,
+                )
                 result = LabResult(
                     report=report,
                     indicator=indicator,
+                    source_name=item.source_name or item.indicator_name,
+                    raw_value=item.raw_value,
+                    value_operator=item.value_operator,
                     measured_value=result_value,
                     unit=item.unit,
                     captured_lower_bound=_decimal_or_none(item.captured_lower_bound),
                     captured_upper_bound=_decimal_or_none(item.captured_upper_bound),
+                    reference_text=item.reference_text,
                     flag=item.flag,
                     comment=item.comment,
                 )
@@ -292,6 +326,7 @@ class HealthService:
                     patient.sex,
                     patient_age_days,
                 )
+                effective_range = matched_range or captured_range
 
                 warnings: list[str] = []
                 if indicator.canonical_unit and item.unit and indicator.canonical_unit != item.unit:
@@ -303,10 +338,15 @@ class HealthService:
                     ImportedLabResult(
                         indicator_code=indicator.code,
                         indicator_name=indicator.name,
+                        standard_system=indicator.standard_system,
+                        standard_code=indicator.standard_code,
+                        source_name=result.source_name,
                         value=float(result_value),
+                        raw_value=result.raw_value,
                         unit=item.unit or indicator.canonical_unit,
-                        status=classify_value(result_value, matched_range),
-                        reference_range=self._reference_range_view(matched_range) if matched_range else None,
+                        status=classify_value(result_value, effective_range),
+                        reference_range=self._reference_range_view_any(effective_range) if effective_range else None,
+                        reference_text=result.reference_text,
                         warnings=warnings,
                     )
                 )
@@ -368,16 +408,22 @@ class HealthService:
                     patient.sex,
                     _calculate_age_days(patient.birth_date, report.collected_at),
                 )
+                effective_range = matched_range or self._captured_range_from_result(result)
                 points.append(
                     IndicatorHistoryPoint(
                         report_id=report.id,
                         collected_at=report.collected_at,
                         source_system=report.source_system,
                         external_report_id=report.external_report_id,
+                        standard_system=indicator.standard_system,
+                        standard_code=indicator.standard_code,
+                        source_name=result.source_name,
                         value=float(result.measured_value),
+                        raw_value=result.raw_value,
                         unit=result.unit or indicator.canonical_unit,
-                        status=classify_value(result.measured_value, matched_range),
-                        reference_range=self._reference_range_view(matched_range) if matched_range else None,
+                        status=classify_value(result.measured_value, effective_range),
+                        reference_range=self._reference_range_view_any(effective_range) if effective_range else None,
+                        reference_text=result.reference_text,
                     )
                 )
 
@@ -387,6 +433,8 @@ class HealthService:
                 patient_name=patient.full_name,
                 indicator_code=indicator.code,
                 indicator_name=indicator.name,
+                standard_system=indicator.standard_system,
+                standard_code=indicator.standard_code,
                 canonical_unit=indicator.canonical_unit,
                 points=points,
             )
@@ -445,10 +493,89 @@ class HealthService:
         return IndicatorCatalogEntry(
             code=indicator.code,
             name=indicator.name,
+            standard_system=indicator.standard_system,
+            standard_code=indicator.standard_code,
             canonical_unit=indicator.canonical_unit,
             description=indicator.description,
             reference_range_count=len(indicator.reference_ranges),
             reference_ranges=[self._reference_range_view(item) for item in indicator.reference_ranges],
+        )
+
+    def _find_indicator_for_write(
+        self,
+        session,
+        code: str,
+        standard_system: str | None,
+        standard_code: str | None,
+    ) -> Indicator | None:
+        by_standard = self._find_indicator_by_standard(session, standard_system, standard_code)
+        by_code = self._find_indicator_by_code(session, code)
+        if by_standard and by_code and by_standard.id != by_code.id:
+            raise HealthMcpError(
+                "indicator_code conflicts with an existing standard_system/standard_code mapping"
+            )
+        if by_standard and by_standard.code.lower() != code.lower():
+            raise HealthMcpError(
+                "The provided indicator_code does not match the existing indicator bound to this standard identity"
+            )
+        return by_standard or by_code
+
+    def _find_indicator_for_import(
+        self,
+        session,
+        code: str,
+        standard_system: str | None,
+        standard_code: str | None,
+    ) -> Indicator | None:
+        return self._find_indicator_by_standard(session, standard_system, standard_code) or self._find_indicator_by_code(
+            session,
+            code,
+        )
+
+    def _find_indicator_by_code(self, session, code: str) -> Indicator | None:
+        return session.scalar(
+            select(Indicator)
+            .options(selectinload(Indicator.reference_ranges))
+            .where(func.lower(Indicator.code) == code.lower())
+        )
+
+    def _find_indicator_by_standard(
+        self,
+        session,
+        standard_system: str | None,
+        standard_code: str | None,
+    ) -> Indicator | None:
+        if not standard_system or not standard_code:
+            return None
+        return session.scalar(
+            select(Indicator)
+            .options(selectinload(Indicator.reference_ranges))
+            .where(
+                func.lower(Indicator.standard_system) == standard_system.lower(),
+                func.lower(Indicator.standard_code) == standard_code.lower(),
+            )
+        )
+
+    def _apply_indicator_standard_identity(
+        self,
+        indicator: Indicator,
+        standard_system: str,
+        standard_code: str,
+    ) -> None:
+        if indicator.standard_system is None and indicator.standard_code is None:
+            indicator.standard_system = standard_system
+            indicator.standard_code = standard_code
+            return
+        if (
+            indicator.standard_system
+            and indicator.standard_system.lower() == standard_system.lower()
+            and indicator.standard_code
+            and indicator.standard_code.lower() == standard_code.lower()
+        ):
+            return
+        raise HealthMcpError(
+            f"Indicator '{indicator.code}' is already bound to "
+            f"{indicator.standard_system}:{indicator.standard_code}"
         )
 
     def _reference_range_view(
@@ -464,4 +591,46 @@ class HealthService:
             upper_bound=_float_or_none(range_row.upper_bound),
             note=range_row.note,
             priority=range_row.priority,
+        )
+
+    def _reference_range_view_any(
+        self,
+        range_row: IndicatorReferenceRange | ComparableRange,
+    ) -> ReferenceRangeView:
+        if isinstance(range_row, IndicatorReferenceRange):
+            return self._reference_range_view(range_row)
+        sex = Sex(range_row.sex) if range_row.sex else None
+        return ReferenceRangeView(
+            sex=sex,
+            min_age_years=_days_to_years(range_row.min_age_days),
+            max_age_years=_days_to_years(range_row.max_age_days),
+            lower_bound=_float_or_none(range_row.lower_bound),
+            upper_bound=_float_or_none(range_row.upper_bound),
+            note=range_row.note,
+            priority=range_row.priority,
+        )
+
+    def _captured_range_from_bounds(
+        self,
+        lower_bound: float | None,
+        upper_bound: float | None,
+        reference_text: str | None,
+    ) -> ComparableRange | None:
+        lower_decimal = _decimal_or_none(lower_bound)
+        upper_decimal = _decimal_or_none(upper_bound)
+        if lower_decimal is None and upper_decimal is None:
+            return None
+        return ComparableRange(
+            lower_bound=lower_decimal,
+            upper_bound=upper_decimal,
+            note=reference_text,
+        )
+
+    def _captured_range_from_result(self, result: LabResult) -> ComparableRange | None:
+        if result.captured_lower_bound is None and result.captured_upper_bound is None:
+            return None
+        return ComparableRange(
+            lower_bound=result.captured_lower_bound,
+            upper_bound=result.captured_upper_bound,
+            note=result.reference_text,
         )
