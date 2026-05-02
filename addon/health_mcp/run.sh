@@ -18,5 +18,4 @@ fi
 bashio::log.info "Starting Health MCP on port ${HEALTH_MCP_PORT}"
 
 cd /usr/src/app
-exec python -m health_mcp
-
+exec /opt/venv/bin/python -m health_mcp
