@@ -20,6 +20,7 @@ from .schemas import (
     IndicatorSummary,
     IndicatorUpsertInput,
     LabReportInput,
+    PatientIndicatorBatchView,
     ReferenceRangeInput,
     ReferenceRangeView,
     Sex,
@@ -438,6 +439,125 @@ class HealthService:
                 standard_code=indicator.standard_code,
                 canonical_unit=indicator.canonical_unit,
                 points=points,
+            )
+
+    def get_patient_indicators_history(
+        self,
+        owner_user_id: str,
+        patient_external_id: str,
+        indicator_codes: list[str],
+        limit: int = 20,
+    ) -> PatientIndicatorBatchView:
+        effective_limit = max(1, min(limit, 200))
+        requested_codes: list[str] = []
+        seen_codes: set[str] = set()
+        for code in indicator_codes:
+            normalized = code.strip()
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if lowered in seen_codes:
+                continue
+            seen_codes.add(lowered)
+            requested_codes.append(normalized)
+
+        if not requested_codes:
+            raise HealthMcpError("indicator_codes must contain at least one non-empty value")
+
+        with self.database.session() as session:
+            patient = session.scalar(
+                select(Patient).where(
+                    Patient.owner_user_id == owner_user_id,
+                    Patient.external_id == patient_external_id,
+                )
+            )
+            if patient is None:
+                raise NotFoundError(
+                    f"Patient '{patient_external_id}' for user '{owner_user_id}' was not found"
+                )
+
+            lowered_codes = [code.lower() for code in requested_codes]
+            indicators = session.scalars(
+                select(Indicator)
+                .options(selectinload(Indicator.reference_ranges))
+                .where(func.lower(Indicator.code).in_(lowered_codes))
+            ).all()
+            indicators_by_code = {indicator.code.lower(): indicator for indicator in indicators}
+
+            found_indicator_ids = [indicator.id for indicator in indicators]
+            rows = []
+            if found_indicator_ids:
+                rows = session.execute(
+                    select(LabResult, LabReport)
+                    .join(LabReport, LabResult.report_id == LabReport.id)
+                    .where(
+                        LabReport.patient_id == patient.id,
+                        LabResult.indicator_id.in_(found_indicator_ids),
+                    )
+                    .order_by(LabResult.indicator_id.asc(), LabReport.collected_at.desc())
+                ).all()
+
+            points_by_indicator_id: dict[int, list[IndicatorHistoryPoint]] = {
+                indicator.id: [] for indicator in indicators
+            }
+
+            for result, report in rows:
+                indicator = result.indicator
+                assert indicator is not None
+                bucket = points_by_indicator_id.setdefault(indicator.id, [])
+                if len(bucket) >= effective_limit:
+                    continue
+                matched_range = select_best_reference_range(
+                    indicator.reference_ranges,
+                    patient.sex,
+                    _calculate_age_days(patient.birth_date, report.collected_at),
+                )
+                effective_range = matched_range or self._captured_range_from_result(result)
+                bucket.append(
+                    IndicatorHistoryPoint(
+                        report_id=report.id,
+                        collected_at=report.collected_at,
+                        source_system=report.source_system,
+                        external_report_id=report.external_report_id,
+                        standard_system=indicator.standard_system,
+                        standard_code=indicator.standard_code,
+                        source_name=result.source_name,
+                        value=float(result.measured_value),
+                        raw_value=result.raw_value,
+                        unit=result.unit or indicator.canonical_unit,
+                        status=classify_value(result.measured_value, effective_range),
+                        reference_range=self._reference_range_view_any(effective_range) if effective_range else None,
+                        reference_text=result.reference_text,
+                    )
+                )
+
+            history_views: list[IndicatorHistoryView] = []
+            missing_codes: list[str] = []
+            for requested_code in requested_codes:
+                indicator = indicators_by_code.get(requested_code.lower())
+                if indicator is None:
+                    missing_codes.append(requested_code)
+                    continue
+                history_views.append(
+                    IndicatorHistoryView(
+                        owner_user_id=patient.owner_user_id,
+                        patient_external_id=patient.external_id,
+                        patient_name=patient.full_name,
+                        indicator_code=indicator.code,
+                        indicator_name=indicator.name,
+                        standard_system=indicator.standard_system,
+                        standard_code=indicator.standard_code,
+                        canonical_unit=indicator.canonical_unit,
+                        points=points_by_indicator_id.get(indicator.id, []),
+                    )
+                )
+
+            return PatientIndicatorBatchView(
+                owner_user_id=patient.owner_user_id,
+                patient_external_id=patient.external_id,
+                patient_name=patient.full_name,
+                indicators=history_views,
+                missing_indicator_codes=missing_codes,
             )
 
     def list_user_patients(

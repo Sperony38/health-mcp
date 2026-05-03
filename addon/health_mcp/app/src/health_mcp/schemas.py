@@ -178,6 +178,14 @@ class IndicatorHistoryView(BaseModel):
     points: list[IndicatorHistoryPoint] = Field(default_factory=list)
 
 
+class PatientIndicatorBatchView(BaseModel):
+    owner_user_id: str
+    patient_external_id: str
+    patient_name: str | None = None
+    indicators: list[IndicatorHistoryView] = Field(default_factory=list)
+    missing_indicator_codes: list[str] = Field(default_factory=list)
+
+
 class UserPatientSummary(BaseModel):
     owner_user_id: str
     owner_display_name: str | None = None

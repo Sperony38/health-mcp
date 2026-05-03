@@ -21,6 +21,7 @@ from .schemas import (
     IndicatorHistoryView,
     IndicatorUpsertInput,
     LabReportInput,
+    PatientIndicatorBatchView,
     ReferenceRangeInput,
 )
 from .service import HealthMcpError, HealthService
@@ -155,6 +156,23 @@ def create_mcp_server(
             owner_user_id=owner_user_id,
             patient_external_id=patient_external_id,
             indicator_code=indicator_code,
+            limit=limit,
+        )
+
+    @mcp.tool()
+    def get_patient_indicators_history(
+        owner_user_id: str,
+        patient_external_id: str,
+        indicator_codes: list[str],
+        limit: int = 20,
+    ) -> PatientIndicatorBatchView:
+        """Return one patient's historical values for multiple indicators in a single call."""
+
+        _require_ready()
+        return service.get_patient_indicators_history(
+            owner_user_id=owner_user_id,
+            patient_external_id=patient_external_id,
+            indicator_codes=indicator_codes,
             limit=limit,
         )
 

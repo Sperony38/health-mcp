@@ -80,3 +80,4 @@ def test_tools_list_exposes_service_user_discovery_tool():
     assert response.status_code == 200
     tool_names = [item["name"] for item in response.json()["result"]["tools"]]
     assert "list_service_users" in tool_names
+    assert "get_patient_indicators_history" in tool_names

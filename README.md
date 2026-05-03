@@ -15,6 +15,7 @@ Remote MCP service for importing laboratory analyses, storing them in MariaDB, a
 - stores indicator catalog entries and reference ranges
 - supports international semantic identities such as LOINC for cross-lab normalization
 - resolves the best matching reference range by age and sex
+- supports batch retrieval of multiple indicator histories for one patient in a single MCP call
 - returns indicator catalog metadata and patient indicator history over MCP
 
 ## Local Development
