@@ -41,6 +41,8 @@ If `api_key` is configured, clients must send:
 
 `Authorization: Bearer <api_key>`
 
+If MariaDB is unavailable or schema migration fails, the add-on now stays up and returns `503` from `/health` together with the startup error instead of crashing the whole HTTP listener.
+
 ## Suggested Workflow
 
 1. Call `upsert_indicator_catalog_entry` to register an indicator and its reference ranges.

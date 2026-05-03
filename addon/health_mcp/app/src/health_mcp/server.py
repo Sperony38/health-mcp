@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+from typing import Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -22,7 +23,10 @@ from .schemas import (
     LabReportInput,
     ReferenceRangeInput,
 )
-from .service import HealthService
+from .service import HealthMcpError, HealthService
+
+
+logger = logging.getLogger(__name__)
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
@@ -53,7 +57,11 @@ def _configure_logging(level: str) -> None:
     )
 
 
-def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
+def create_mcp_server(
+    service: HealthService,
+    settings: Settings,
+    ensure_ready: Callable[[], str | None] | None = None,
+) -> FastMCP:
     mcp = FastMCP(
         "Health MCP",
         instructions=(
@@ -68,6 +76,13 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
+    def _require_ready() -> None:
+        if ensure_ready is None:
+            return
+        error = ensure_ready()
+        if error is not None:
+            raise HealthMcpError(f"Health MCP is not ready: {error}")
+
     @mcp.tool()
     def upsert_indicator_catalog_entry(
         code: str,
@@ -79,6 +94,7 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     ) -> IndicatorCatalogEntry:
         """Create or update an indicator catalog entry and its reusable reference ranges."""
 
+        _require_ready()
         return service.upsert_indicator(
             IndicatorUpsertInput(
                 code=code,
@@ -94,24 +110,28 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     def list_indicator_catalog(query: str | None = None, limit: int = 50):
         """List indicator catalog entries, optionally filtered by code or name."""
 
+        _require_ready()
         return service.list_indicators(query=query, limit=limit)
 
     @mcp.tool()
     def get_indicator_catalog_entry(code: str) -> IndicatorCatalogEntry:
         """Return one indicator catalog entry together with all configured reference ranges."""
 
+        _require_ready()
         return service.get_indicator(code)
 
     @mcp.tool()
     def import_lab_report(report: LabReportInput):
         """Import one patient lab report under a specific owner_user_id and calculate low/normal/high status."""
 
+        _require_ready()
         return service.import_lab_report(report)
 
     @mcp.tool()
     def list_user_patients(owner_user_id: str, query: str | None = None, limit: int = 50):
         """List patients that belong to one Home Assistant user."""
 
+        _require_ready()
         return service.list_user_patients(owner_user_id=owner_user_id, query=query, limit=limit)
 
     @mcp.tool()
@@ -123,6 +143,7 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     ) -> IndicatorHistoryView:
         """Return a patient's historical values for a single indicator, scoped to one owner_user_id."""
 
+        _require_ready()
         return service.get_patient_indicator_history(
             owner_user_id=owner_user_id,
             patient_external_id=patient_external_id,
@@ -134,12 +155,14 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     def indicator_catalog_resource(code: str) -> str:
         """Indicator catalog entry as JSON."""
 
+        _require_ready()
         return service.get_indicator(code).model_dump_json(indent=2)
 
     @mcp.resource("user://{owner_user_id}/patients")
     def user_patients_resource(owner_user_id: str) -> str:
         """Patients for a user as JSON."""
 
+        _require_ready()
         return json.dumps(
             [item.model_dump(mode="json") for item in service.list_user_patients(owner_user_id)],
             indent=2,
@@ -149,6 +172,7 @@ def create_mcp_server(service: HealthService, settings: Settings) -> FastMCP:
     def patient_indicator_resource(owner_user_id: str, patient_external_id: str, indicator_code: str) -> str:
         """Patient indicator history as JSON, scoped to one owner_user_id."""
 
+        _require_ready()
         return service.get_patient_indicator_history(
             owner_user_id=owner_user_id,
             patient_external_id=patient_external_id,
@@ -164,21 +188,67 @@ def create_app(settings: Settings | None = None) -> Starlette:
 
     database = Database(settings)
     service = HealthService(database)
+    startup_state = {
+        "schema_initialized": False,
+        "schema_error": None,
+    }
 
-    if settings.auto_migrate:
-        service.initialize_schema()
+    def ensure_ready(force: bool = False) -> str | None:
+        if not settings.auto_migrate:
+            return None
+        if startup_state["schema_initialized"] and not force:
+            return None
 
-    mcp = create_mcp_server(service, settings)
+        try:
+            service.initialize_schema()
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            startup_state["schema_initialized"] = False
+            startup_state["schema_error"] = error
+            logger.exception("Health MCP schema initialization failed")
+            return error
+
+        startup_state["schema_initialized"] = True
+        startup_state["schema_error"] = None
+        return None
+
+    ensure_ready(force=True)
+
+    mcp = create_mcp_server(service, settings, ensure_ready=lambda: ensure_ready())
 
     async def homepage(_: Request) -> JSONResponse:
-        return JSONResponse({
+        payload = {
             "name": "Health MCP",
             "mcp_endpoint": "/mcp",
             "health_endpoint": "/health",
-        })
+            "status": "ok" if startup_state["schema_error"] is None else "degraded",
+        }
+        if startup_state["schema_error"] is not None:
+            payload["error"] = startup_state["schema_error"]
+        return JSONResponse(payload)
 
     async def healthcheck(_: Request) -> JSONResponse:
-        service.ping()
+        schema_error = ensure_ready()
+        if schema_error is not None:
+            return JSONResponse(
+                {
+                    "status": "degraded",
+                    "error": schema_error,
+                },
+                status_code=503,
+            )
+
+        try:
+            service.ping()
+        except Exception as exc:
+            logger.exception("Health MCP database ping failed")
+            return JSONResponse(
+                {
+                    "status": "degraded",
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                status_code=503,
+            )
         return JSONResponse({"status": "ok"})
 
     @contextlib.asynccontextmanager
