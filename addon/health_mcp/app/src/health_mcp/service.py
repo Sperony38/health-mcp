@@ -23,6 +23,7 @@ from .schemas import (
     ReferenceRangeInput,
     ReferenceRangeView,
     Sex,
+    ServiceUserSummary,
     UserPatientSummary,
 )
 
@@ -470,6 +471,45 @@ class HealthService:
                     birth_date=row.birth_date,
                 )
                 for row in patients
+            ]
+
+    def list_service_users(
+        self,
+        query: str | None = None,
+        limit: int = 50,
+    ) -> list[ServiceUserSummary]:
+        effective_limit = max(1, min(limit, 200))
+        with self.database.session() as session:
+            statement = (
+                select(
+                    Patient.owner_user_id.label("owner_user_id"),
+                    func.max(Patient.owner_display_name).label("owner_display_name"),
+                    func.count(func.distinct(Patient.id)).label("patient_count"),
+                    func.count(func.distinct(LabReport.id)).label("report_count"),
+                    func.max(LabReport.collected_at).label("last_report_at"),
+                )
+                .select_from(Patient)
+                .outerjoin(LabReport, LabReport.patient_id == Patient.id)
+                .group_by(Patient.owner_user_id)
+                .order_by(func.max(LabReport.collected_at).desc(), Patient.owner_user_id.asc())
+            )
+            if query:
+                like = f"%{query.lower()}%"
+                statement = statement.where(
+                    func.lower(Patient.owner_user_id).like(like)
+                    | func.lower(func.coalesce(Patient.owner_display_name, "")).like(like)
+                )
+
+            rows = session.execute(statement.limit(effective_limit)).all()
+            return [
+                ServiceUserSummary(
+                    owner_user_id=row.owner_user_id,
+                    owner_display_name=row.owner_display_name,
+                    patient_count=row.patient_count or 0,
+                    report_count=row.report_count or 0,
+                    last_report_at=row.last_report_at,
+                )
+                for row in rows
             ]
 
     def _build_reference_range_rows(

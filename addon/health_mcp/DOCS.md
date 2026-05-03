@@ -45,10 +45,13 @@ If MariaDB is unavailable or schema migration fails, the add-on now stays up and
 
 ## Suggested Workflow
 
-1. Call `upsert_indicator_catalog_entry` to register an indicator and its reference ranges.
-2. Call `import_lab_report` with `owner_user_id` to import patient results for one Home Assistant user.
-3. Call `list_user_patients` to browse members linked to that user.
-4. Call `get_patient_indicator_history` or `get_indicator_catalog_entry` to read data back.
+1. Call `list_service_users` first if you need to discover which `owner_user_id` values already exist in the service.
+2. Call `list_user_patients(owner_user_id=...)` to browse members linked to one owner.
+3. Call `upsert_indicator_catalog_entry` to register an indicator and its reference ranges.
+4. Call `import_lab_report` with `owner_user_id` to import patient results for one Home Assistant user.
+5. Call `get_patient_indicator_history` or `get_indicator_catalog_entry` to read data back.
+
+The same owner list is also exposed as the MCP resource `service://users`.
 
 ## Example Import Shape
 
@@ -98,6 +101,7 @@ If MariaDB is unavailable or schema migration fails, the add-on now stays up and
 ## Notes
 
 - `import_lab_report` is the recommended ingestion path when an agent or client has already parsed a PDF, OCR, or another upstream source into structured values.
+- `list_service_users` is the discovery entrypoint when the caller does not yet know which `owner_user_id` values are present in the database.
 - For cross-lab normalization, prefer an international semantic identity such as `standard_system: "loinc"` plus `standard_code`, and keep `indicator_code` aligned with that identity, for example `loinc:2093-3`.
 - If an indicator has no catalog range yet, the service falls back to `captured_lower_bound` and `captured_upper_bound` from the imported result so status can still be classified immediately.
 - `raw_value`, `value_operator`, `source_name`, and `reference_text` let the client preserve the source lab wording without sacrificing normalized numeric history.

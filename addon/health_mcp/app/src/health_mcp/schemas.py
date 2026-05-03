@@ -185,3 +185,11 @@ class UserPatientSummary(BaseModel):
     patient_name: str | None = None
     sex: Sex | None = None
     birth_date: date | None = None
+
+
+class ServiceUserSummary(BaseModel):
+    owner_user_id: str
+    owner_display_name: str | None = None
+    patient_count: int = 0
+    report_count: int = 0
+    last_report_at: datetime | None = None

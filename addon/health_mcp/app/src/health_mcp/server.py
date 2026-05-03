@@ -128,6 +128,13 @@ def create_mcp_server(
         return service.import_lab_report(report)
 
     @mcp.tool()
+    def list_service_users(query: str | None = None, limit: int = 50):
+        """List known owner_user_id values together with basic usage counts for discovery."""
+
+        _require_ready()
+        return service.list_service_users(query=query, limit=limit)
+
+    @mcp.tool()
     def list_user_patients(owner_user_id: str, query: str | None = None, limit: int = 50):
         """List patients that belong to one Home Assistant user."""
 
@@ -165,6 +172,16 @@ def create_mcp_server(
         _require_ready()
         return json.dumps(
             [item.model_dump(mode="json") for item in service.list_user_patients(owner_user_id)],
+            indent=2,
+        )
+
+    @mcp.resource("service://users")
+    def service_users_resource() -> str:
+        """Known service users as JSON."""
+
+        _require_ready()
+        return json.dumps(
+            [item.model_dump(mode="json") for item in service.list_service_users()],
             indent=2,
         )
 
@@ -221,6 +238,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
             "name": "Health MCP",
             "mcp_endpoint": "/mcp",
             "health_endpoint": "/health",
+            "service_users_resource": "service://users",
             "status": "ok" if startup_state["schema_error"] is None else "degraded",
         }
         if startup_state["schema_error"] is not None:
